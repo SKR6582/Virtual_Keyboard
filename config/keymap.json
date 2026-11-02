@@ -1,0 +1,43 @@
+{
+  "layout_name": "Standard_SubKeys",
+  "resolution": [1920, 1080],
+  "plane_size": [1000, 600],
+  "keys": [
+    {
+      "label": "UP",
+      "key_code": "up",
+      "bbox": [450, 100, 550, 200]
+    },
+    {
+      "label": "LEFT",
+      "key_code": "left",
+      "bbox": [330, 220, 430, 320]
+    },
+    {
+      "label": "DOWN",
+      "key_code": "down",
+      "bbox": [450, 220, 550, 320]
+    },
+    {
+      "label": "RIGHT",
+      "key_code": "right",
+      "bbox": [570, 220, 670, 320]
+    },
+    {
+      "label": "SPACE",
+      "key_code": "space",
+      "bbox": [300, 360, 700, 460]
+    },
+    {
+      "label": "ENTER",
+      "key_code": "enter",
+      "bbox": [720, 220, 840, 320]
+    },
+    {
+      "label": "BACKSPACE",
+      "key_code": "backspace",
+      "bbox": [720, 100, 840, 200]
+    }
+  ]
+}
+

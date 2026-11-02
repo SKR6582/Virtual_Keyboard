@@ -1,0 +1,13 @@
+{
+  "name": "cv-type-virtual-keyboard",
+  "version": "1.0.0",
+  "description": "Multi-view ML Virtual Keyboard with Transparent Overlay",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^40.8.0",
+    "ws": "^8.18.0"
+  }
+}
