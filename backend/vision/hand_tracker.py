@@ -10,15 +10,30 @@ import mediapipe as mp
 class HandTracker:
     def __init__(self, max_num_hands: int = 1, min_detection_confidence: float = 0.6,
                  min_tracking_confidence: float = 0.5, moving_average_window: int = 3):
-        self.mp_hands = mp.solutions.hands
+        try:
+            if hasattr(mp, 'solutions'):
+                self.mp_hands = mp.solutions.hands
+                self.mp_drawing = mp.solutions.drawing_utils
+                self.mp_drawing_styles = mp.solutions.drawing_styles
+            else:
+                import mediapipe.python.solutions.hands as mp_hands
+                import mediapipe.python.solutions.drawing_utils as mp_drawing
+                import mediapipe.python.solutions.drawing_styles as mp_drawing_styles
+                self.mp_hands = mp_hands
+                self.mp_drawing = mp_drawing
+                self.mp_drawing_styles = mp_drawing_styles
+        except (AttributeError, ImportError) as e:
+            raise RuntimeError(
+                f"MediaPipe solutions API is not available in the current Python environment (mediapipe version: {getattr(mp, '__version__', 'unknown')}). "
+                "Please run using Python 3.10-3.12 with 'mediapipe>=0.10.14,<1.0.0'."
+            ) from e
+
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=max_num_hands,
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence
         )
-        self.mp_drawing = mp.solutions.drawing_utils
-        self.mp_drawing_styles = mp.solutions.drawing_styles
         
         self.window_size = moving_average_window
         # History queue for smoothing: deque of (x, y, z)

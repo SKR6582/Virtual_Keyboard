@@ -36,8 +36,8 @@
 
       <div class="plane-container">
         <div class="control-row">
-          <span class="section-title">Normalized Keyboard Plane</span>
-          <span style="font-size: 12px; color: #98a2b3;">Hover: <strong id="hover-key-text" style="color: #53b1fd;">NONE</strong></span>
+          <span class="section-title">Physical Keyboard Status Monitor</span>
+          <span style="font-size: 12px; color: #98a2b3;">Last Strike: <strong id="last-strike-key-text" style="color: #12b76a;">NONE</strong></span>
         </div>
         <canvas id="keyboard-canvas" width="1000" height="600"></canvas>
       </div>
@@ -45,6 +45,15 @@
 
     <!-- Right Column: Control Panels -->
     <div class="right-panel">
+      <!-- Camera Selection Card -->
+      <div class="control-card">
+        <span class="section-title">Camera Device Selection</span>
+        <div class="control-row">
+          <select id="select-camera" style="flex: 1; margin-right: 8px;"></select>
+          <button id="btn-refresh-cameras" class="btn btn-secondary">Scan</button>
+        </div>
+      </div>
+
       <!-- System Actions Card -->
       <div class="control-card">
         <span class="section-title">System & Input Controls</span>

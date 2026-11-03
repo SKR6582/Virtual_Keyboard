@@ -1,11 +1,58 @@
 const { app, BrowserWindow, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const os = require('os');
+const fs = require('fs');
+const { spawn, spawnSync } = require('child_process');
 const net = require('net');
 
 let mainWindow = null;
 let overlayWindow = null;
 let pythonProcess = null;
+
+function resolvePythonPath(projectRoot) {
+  if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
+    return process.env.PYTHON_PATH;
+  }
+
+  const homedir = os.homedir();
+  const isWin = process.platform === 'win32';
+  const binName = isWin ? 'python.exe' : 'python3';
+  const scriptsBinName = isWin ? 'python.exe' : 'python';
+
+  const candidates = [
+    path.join(projectRoot, '.venv', isWin ? 'Scripts' : 'bin', scriptsBinName),
+    path.join(projectRoot, 'venv', isWin ? 'Scripts' : 'bin', scriptsBinName),
+    process.env.CONDA_PREFIX ? path.join(process.env.CONDA_PREFIX, isWin ? 'python.exe' : 'bin/python3') : null,
+    '/opt/anaconda3/bin/python3',
+    path.join(homedir, 'anaconda3', 'bin', 'python3'),
+    path.join(homedir, 'miniconda3', 'bin', 'python3'),
+    path.join(homedir, 'miniforge3', 'bin', 'python3'),
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+    isWin ? 'python' : 'python3'
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (path.isAbsolute(candidate) && !fs.existsSync(candidate)) {
+      continue;
+    }
+    try {
+      const res = spawnSync(candidate, ['-c', 'import mediapipe as mp; assert hasattr(mp, "solutions")'], {
+        stdio: 'ignore',
+        timeout: 2500
+      });
+      if (res.status === 0) {
+        console.log(`Auto-detected compatible Python interpreter: ${candidate}`);
+        return candidate;
+      }
+    } catch {
+      // Continue search
+    }
+  }
+
+  console.warn('Could not verify mediapipe solutions API on candidate interpreters; defaulting to system python.');
+  return isWin ? 'python' : 'python3';
+}
 
 function checkPortInUse(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
@@ -34,9 +81,9 @@ async function startPythonBackend() {
   }
 
   const projectRoot = path.join(__dirname, '..');
-  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  const pythonCmd = resolvePythonPath(projectRoot);
 
-  console.log('Spawning Python backend...');
+  console.log(`Spawning Python backend using: ${pythonCmd}...`);
   pythonProcess = spawn(pythonCmd, ['-m', 'backend.app'], {
     cwd: projectRoot,
     stdio: 'inherit'

@@ -24,6 +24,15 @@ class TestIntegrationWebSocket(unittest.IsolatedAsyncioTestCase):
     async def test_full_websocket_communication(self):
         uri = f"ws://{WS_HOST}:{WS_PORT}"
         async with websockets.connect(uri) as ws:
+            async def recv_response(expected_type, timeout=5.0):
+                deadline = asyncio.get_event_loop().time() + timeout
+                while asyncio.get_event_loop().time() < deadline:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                    parsed = json.loads(msg)
+                    if parsed.get("type") == expected_type:
+                        return parsed
+                raise TimeoutError(f"Did not receive expected type: {expected_type}")
+
             # 1. Receive initial configuration
             init_msg = await asyncio.wait_for(ws.recv(), timeout=3.0)
             data = json.loads(init_msg)
@@ -32,21 +41,26 @@ class TestIntegrationWebSocket(unittest.IsolatedAsyncioTestCase):
 
             # 2. Test toggle OS input command
             await ws.send(json.dumps({"action": "toggle_os_input", "enabled": False}))
-            resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
+            resp = await recv_response("os_input_status")
             self.assertEqual(resp.get("type"), "os_input_status")
             self.assertFalse(resp.get("enabled"))
 
             # 3. Test start data collection command
             await ws.send(json.dumps({"action": "start_collection", "key_label": "SPACE"}))
-            resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
+            resp = await recv_response("collection_status")
             self.assertEqual(resp.get("type"), "collection_status")
             self.assertTrue(resp.get("collecting"))
 
             # 4. Test model training command (.pkl)
             await ws.send(json.dumps({"action": "train_model"}))
-            resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=6.0))
+            resp = await recv_response("train_result", timeout=8.0)
             self.assertEqual(resp.get("type"), "train_result")
             self.assertTrue(resp["result"]["success"])
+
+            # 5. Test camera switch command
+            await ws.send(json.dumps({"action": "switch_camera", "camera_index": 0}))
+            resp = await recv_response("camera_switched")
+            self.assertEqual(resp.get("type"), "camera_switched")
 
             # 5. Receive real-time tick frame
             tick_msg = await asyncio.wait_for(ws.recv(), timeout=3.0)

@@ -51,7 +51,7 @@ class VirtualKeyboardBackend:
 
     def initialize(self):
         connected_cam_count = self.camera_mgr.scan_and_initialize(MAX_PROBE_CAMERAS)
-        print(f"Cameras initialized: {connected_cam_count} active camera(s).")
+        print(f"Cameras initialized: {connected_cam_count} active camera(s). Primary camera: {self.camera_mgr.primary_camera_index}")
         # Attempt auto-calibration from first available frame
         primary_frame = self.camera_mgr.get_primary_frame()
         if primary_frame is not None:
@@ -64,9 +64,11 @@ class VirtualKeyboardBackend:
         if not frames:
             return {}
 
-        active_ids = sorted(list(frames.keys()))
-        primary_id = active_ids[0]
-        primary_frame = frames[primary_id]
+        primary_frame = self.camera_mgr.get_primary_frame()
+        if primary_frame is None:
+            return {}
+
+        active_ids = self.camera_mgr.get_active_camera_ids()
 
         # Auto-calibrate if not calibrated yet
         if not self.perspective.is_calibrated:
@@ -78,9 +80,10 @@ class VirtualKeyboardBackend:
 
         # Track secondary cameras if present
         secondary_tracks = {}
-        for cam_id in active_ids[1:]:
-            s_track, _ = self.hand_tracker.process_frame(frames[cam_id])
-            secondary_tracks[cam_id] = s_track
+        for cam_id in active_ids:
+            if cam_id != self.camera_mgr.primary_camera_index and cam_id in frames:
+                s_track, _ = self.hand_tracker.process_frame(frames[cam_id])
+                secondary_tracks[cam_id] = s_track
 
         warped_coords = None
         current_key = None
@@ -115,6 +118,10 @@ class VirtualKeyboardBackend:
                 if injected:
                     self.sound_player.play_click()
                     strike_occurred = True
+                    # Visual feedback on camera frame
+                    cv2.circle(annotated_primary, (int(tip_x), int(tip_y)), 24, (0, 255, 0), -1)
+                    cv2.putText(annotated_primary, f"HIT: {current_key}", (int(tip_x) + 15, int(tip_y) - 15),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
 
             # If currently in data collection mode, save sample
             if self.is_collecting and (fsm_strike or ml_prediction.get("is_contact")):
@@ -138,9 +145,11 @@ class VirtualKeyboardBackend:
             "type": "tick",
             "timestamp": time.time(),
             "active_cameras": len(active_ids),
+            "primary_camera": self.camera_mgr.primary_camera_index,
+            "is_simulation": self.camera_mgr.use_simulation,
             "calibrated": self.perspective.is_calibrated,
             "preview_frame": jpg_as_text,
-            "cursor": {"x": warped_coords[0], "y": warped_coords[1]} if warped_coords else None,
+            "fingertip_coords": {"x": warped_coords[0], "y": warped_coords[1]} if warped_coords else None,
             "current_key": current_key,
             "strike": strike_occurred,
             "strike_key": current_key if strike_occurred else None,
@@ -153,13 +162,17 @@ class VirtualKeyboardBackend:
     async def client_handler(self, websocket):
         self.connected_clients.add(websocket)
         try:
+            available_cams = self.camera_mgr.probe_available_cameras(6)
             # Send initial configuration
             init_msg = json.dumps({
                 "type": "init",
                 "keys": self.key_mapper.get_keys(),
                 "plane_size": self.key_mapper.plane_size,
                 "dataset_stats": self.dataset_mgr.get_stats(),
-                "os_input_enabled": self.key_injector.enabled
+                "os_input_enabled": self.key_injector.enabled,
+                "available_cameras": available_cams,
+                "primary_camera": self.camera_mgr.primary_camera_index,
+                "is_simulation": self.camera_mgr.use_simulation
             })
             await websocket.send(init_msg)
 
@@ -167,7 +180,30 @@ class VirtualKeyboardBackend:
                 data = json.loads(message)
                 action = data.get("action")
 
-                if action == "start_collection":
+                if action == "switch_camera":
+                    cam_idx = int(data.get("camera_index", 0))
+                    success = self.camera_mgr.switch_primary_camera(cam_idx)
+                    # Reset calibration on camera switch
+                    self.perspective.is_calibrated = False
+                    primary_frame = self.camera_mgr.get_primary_frame()
+                    if primary_frame is not None:
+                        self.perspective.calibrate_from_markers(primary_frame)
+                    await websocket.send(json.dumps({
+                        "type": "camera_switched",
+                        "success": success,
+                        "primary_camera": self.camera_mgr.primary_camera_index,
+                        "is_simulation": self.camera_mgr.use_simulation
+                    }))
+
+                elif action == "refresh_cameras":
+                    available_cams = self.camera_mgr.probe_available_cameras(6)
+                    await websocket.send(json.dumps({
+                        "type": "available_cameras",
+                        "available_cameras": available_cams,
+                        "primary_camera": self.camera_mgr.primary_camera_index
+                    }))
+
+                elif action == "start_collection":
                     self.is_collecting = True
                     self.collect_target_key = data.get("key_label", "UP")
                     await websocket.send(json.dumps({"type": "collection_status", "collecting": True, "target": self.collect_target_key}))

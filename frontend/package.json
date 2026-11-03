@@ -4,10 +4,14 @@
   "description": "Multi-view ML Virtual Keyboard with Transparent Overlay",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "postinstall": "node fix-electron.js"
   },
   "dependencies": {
-    "electron": "^40.8.0",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
   }
 }
+

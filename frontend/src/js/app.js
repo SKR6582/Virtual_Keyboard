@@ -1,20 +1,23 @@
 let socket = null;
 let keys = [];
 let planeSize = [1000, 600];
-let currentCursor = null;
 let currentHoverKey = null;
 let isRecording = false;
 let targetKey = "UP";
 let isOsInputEnabled = true;
+let primaryCameraIndex = 0;
 
 const wsDot = document.getElementById("ws-dot");
 const wsStatusText = document.getElementById("ws-status-text");
 const camCountText = document.getElementById("cam-count-text");
 const calibrationText = document.getElementById("calibration-text");
 const videoStream = document.getElementById("video-stream");
-const hoverKeyText = document.getElementById("hover-key-text");
+const lastStrikeKeyText = document.getElementById("last-strike-key-text");
 const canvas = document.getElementById("keyboard-canvas");
 const ctx = canvas.getContext("2d");
+
+const selectCamera = document.getElementById("select-camera");
+const btnRefreshCameras = document.getElementById("btn-refresh-cameras");
 
 const btnToggleOs = document.getElementById("btn-toggle-os");
 const btnCalibrate = document.getElementById("btn-calibrate");
@@ -64,9 +67,23 @@ function handleMessage(data) {
     canvas.width = planeSize[0];
     canvas.height = planeSize[1];
     isOsInputEnabled = data.os_input_enabled;
+    primaryCameraIndex = data.primary_camera !== undefined ? data.primary_camera : 0;
+    
+    updateCameraOptions(data.available_cameras || [0], primaryCameraIndex, data.is_simulation);
     updateKeySelectOptions();
     updateDatasetStats(data.dataset_stats || {});
     renderCanvas();
+    return;
+  }
+
+  if (data.type === "available_cameras") {
+    updateCameraOptions(data.available_cameras || [0], data.primary_camera !== undefined ? data.primary_camera : primaryCameraIndex);
+    return;
+  }
+
+  if (data.type === "camera_switched") {
+    primaryCameraIndex = data.primary_camera;
+    selectCamera.value = String(data.primary_camera);
     return;
   }
 
@@ -79,13 +96,14 @@ function handleMessage(data) {
       videoStream.src = "data:image/jpeg;base64," + data.preview_frame;
     }
 
-    currentCursor = data.cursor;
     currentHoverKey = data.current_key;
-    hoverKeyText.textContent = currentHoverKey || "NONE";
 
     if (data.strike && data.strike_key) {
       triggerStrikeVisual(data.strike_key);
       addStrikeLog(data.strike_key);
+      if (lastStrikeKeyText) {
+        lastStrikeKeyText.textContent = data.strike_key;
+      }
     }
 
     if (data.dataset_stats) {
@@ -110,7 +128,32 @@ function handleMessage(data) {
   }
 }
 
+function updateCameraOptions(availableIndices, currentIdx, isSimulation = false) {
+  if (!selectCamera) return;
+  selectCamera.innerHTML = "";
+
+  const unique = Array.from(new Set(availableIndices)).sort((a, b) => a - b);
+  unique.forEach((idx) => {
+    const opt = document.createElement("option");
+    opt.value = String(idx);
+    opt.textContent = `Camera ${idx} (Physical)`;
+    if (idx === currentIdx && !isSimulation) {
+      opt.selected = true;
+    }
+    selectCamera.appendChild(opt);
+  });
+
+  const simOpt = document.createElement("option");
+  simOpt.value = "-1";
+  simOpt.textContent = "Simulated Keyboard (Test)";
+  if (isSimulation) {
+    simOpt.selected = true;
+  }
+  selectCamera.appendChild(simOpt);
+}
+
 function updateKeySelectOptions() {
+  if (!selectTargetKey) return;
   selectTargetKey.innerHTML = "";
   keys.forEach((k) => {
     const opt = document.createElement("option");
@@ -124,6 +167,7 @@ function updateKeySelectOptions() {
 }
 
 function updateDatasetStats(stats) {
+  if (!datasetTbody) return;
   datasetTbody.innerHTML = "";
   const entries = Object.entries(stats);
   if (entries.length === 0) {
@@ -143,14 +187,15 @@ function triggerStrikeVisual(keyLabel) {
   strikeTimer = setTimeout(() => {
     activeStrikeKey = null;
     renderCanvas();
-  }, 180);
+  }, 220);
 }
 
 function addStrikeLog(keyLabel) {
+  if (!strikeLogBox) return;
   const timeStr = new Date().toLocaleTimeString();
   const entry = document.createElement("div");
   entry.className = "log-entry active";
-  entry.textContent = `[${timeStr}] Key Pressed: ${keyLabel}`;
+  entry.textContent = `[${timeStr}] STRIKE: ${keyLabel}`;
   strikeLogBox.prepend(entry);
 
   if (strikeLogBox.children.length > 30) {
@@ -161,7 +206,7 @@ function addStrikeLog(keyLabel) {
 function renderCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Background grid
+  // Background subtle grid
   ctx.strokeStyle = "#1e2025";
   ctx.lineWidth = 1;
   const step = 50;
@@ -178,55 +223,59 @@ function renderCanvas() {
     ctx.stroke();
   }
 
-  // Draw keys
+  // Draw Physical Keyboard Layout & Strike State
   keys.forEach((k) => {
     const [x1, y1, x2, y2] = k.bbox;
     const w = x2 - x1;
     const h = y2 - y1;
-    const isHovered = currentHoverKey === k.label;
     const isStruck = activeStrikeKey === k.label;
 
     if (isStruck) {
-      ctx.fillStyle = "#2970ff";
-      ctx.strokeStyle = "#84caff";
-      ctx.lineWidth = 3;
-    } else if (isHovered) {
-      ctx.fillStyle = "#2e3138";
-      ctx.strokeStyle = "#53b1fd";
-      ctx.lineWidth = 2;
+      // Physical key hit flash
+      ctx.fillStyle = "rgba(18, 183, 106, 0.9)";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 4;
+      ctx.shadowColor = "#12b76a";
+      ctx.shadowBlur = 16;
     } else {
       ctx.fillStyle = "#1e2025";
       ctx.strokeStyle = "#383a42";
       ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 0;
     }
 
     ctx.fillRect(x1, y1, w, h);
     ctx.strokeRect(x1, y1, w, h);
+    ctx.shadowBlur = 0;
 
     // Key label
-    ctx.fillStyle = isStruck ? "#ffffff" : isHovered ? "#53b1fd" : "#d0d5dd";
-    ctx.font = "bold 16px sans-serif";
+    ctx.fillStyle = isStruck ? "#ffffff" : "#d0d5dd";
+    ctx.font = isStruck ? "bold 20px sans-serif" : "bold 16px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(k.label, x1 + w / 2, y1 + h / 2);
   });
-
-  // Draw tracked fingertip cursor
-  if (currentCursor) {
-    const cx = currentCursor.x;
-    const cy = currentCursor.y;
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, 10, 0, Math.PI * 2);
-    ctx.fillStyle = activeStrikeKey ? "#f04438" : "rgba(83, 177, 253, 0.85)";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "#ffffff";
-    ctx.stroke();
-  }
 }
 
-// Button Events
+// Camera controls
+if (selectCamera) {
+  selectCamera.addEventListener("change", (e) => {
+    const camIdx = parseInt(e.target.value, 10);
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ action: "switch_camera", camera_index: camIdx }));
+    }
+  });
+}
+
+if (btnRefreshCameras) {
+  btnRefreshCameras.addEventListener("click", () => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ action: "refresh_cameras" }));
+    }
+  });
+}
+
+// System controls
 btnToggleOs.addEventListener("click", () => {
   const next = !isOsInputEnabled;
   if (socket && socket.readyState === WebSocket.OPEN) {
@@ -288,4 +337,3 @@ btnTrain.addEventListener("click", () => {
 });
 
 connectWebSocket();
-

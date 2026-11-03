@@ -22,19 +22,37 @@ class CameraWorker(threading.Thread):
         self.actual_height = 0
 
     def start_camera(self) -> bool:
-        self.cap = cv2.VideoCapture(self.camera_index)
+        # Use AVFOUNDATION backend on macOS if available for better stability
+        backend = cv2.CAP_AVFOUNDATION if hasattr(cv2, 'CAP_AVFOUNDATION') else cv2.CAP_ANY
+        self.cap = cv2.VideoCapture(self.camera_index, backend)
+        
         if not self.cap.isOpened():
-            self.is_connected = False
-            return False
+            # Fallback to default backend
+            self.cap = cv2.VideoCapture(self.camera_index)
+            if not self.cap.isOpened():
+                self.is_connected = False
+                return False
 
-        # Attempt to configure MJPEG 1080p
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        # Attempt to set target resolution and fps
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_height)
         self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
-        ret, frame = self.cap.read()
-        if ret and frame is not None:
+        # Warm-up loop (cameras on macOS often need multiple reads to initialize stream)
+        frame = None
+        for _ in range(8):
+            ret, tmp = self.cap.read()
+            if ret and tmp is not None:
+                frame = tmp
+                break
+            time.sleep(0.05)
+
+        # If resolution didn't take or read failed, attempt fallback to default camera config
+        if frame is None:
+            time.sleep(0.1)
+            ret, frame = self.cap.read()
+
+        if frame is not None:
             self.actual_height, self.actual_width = frame.shape[:2]
             with self.lock:
                 self.latest_frame = frame
@@ -154,6 +172,28 @@ class CameraManager:
         self.target_fps = fps
         self.workers: Dict[int, Any] = {}
         self.use_simulation = False
+        self.primary_camera_index: int = 0
+
+    def probe_available_cameras(self, max_probe: int = 6) -> List[int]:
+        """
+        Quickly probes camera indices 0..max_probe-1 to detect available physical video devices.
+        """
+        available = []
+        backend = cv2.CAP_AVFOUNDATION if hasattr(cv2, 'CAP_AVFOUNDATION') else cv2.CAP_ANY
+        for idx in range(max_probe):
+            # Skip if already running
+            if idx in self.workers and self.workers[idx].is_connected and not isinstance(self.workers[idx], SyntheticCamera):
+                available.append(idx)
+                continue
+            cap = cv2.VideoCapture(idx, backend)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                ret, _ = cap.read()
+                if ret:
+                    available.append(idx)
+                cap.release()
+        return available
 
     def scan_and_initialize(self, max_probe: int = 4) -> int:
         """
@@ -176,9 +216,47 @@ class CameraManager:
             self.use_simulation = True
             sim_cam = SyntheticCamera(0, self.target_width, self.target_height, self.target_fps)
             self.workers[0] = sim_cam
+            self.primary_camera_index = 0
             connected_count = 1
+        else:
+            self.use_simulation = False
+            self.primary_camera_index = min(self.workers.keys())
 
         return connected_count
+
+    def switch_primary_camera(self, camera_index: int) -> bool:
+        """
+        Switches the primary camera to camera_index.
+        Starts a worker for this index if not already active.
+        """
+        if camera_index == -1:
+            # -1 indicates simulated camera mode
+            self.stop_all()
+            self.use_simulation = True
+            sim_cam = SyntheticCamera(0, self.target_width, self.target_height, self.target_fps)
+            self.workers[0] = sim_cam
+            self.primary_camera_index = 0
+            return True
+
+        if camera_index in self.workers and self.workers[camera_index].is_connected:
+            self.primary_camera_index = camera_index
+            self.use_simulation = False
+            return True
+
+        # Need to start a worker for this camera
+        worker = CameraWorker(camera_index, self.target_width, self.target_height, self.target_fps)
+        if worker.start_camera():
+            # If current active was simulation, remove it
+            if self.use_simulation and 0 in self.workers:
+                self.workers[0].stop()
+                del self.workers[0]
+            self.workers[camera_index] = worker
+            self.primary_camera_index = camera_index
+            self.use_simulation = False
+            return True
+        else:
+            worker.stop()
+            return False
 
     def get_frames(self) -> Dict[int, np.ndarray]:
         """
@@ -192,9 +270,11 @@ class CameraManager:
         return frames
 
     def get_primary_frame(self) -> Optional[np.ndarray]:
-        """Returns the frame from the lowest camera index (usually camera 0 / top-view)."""
+        """Returns the frame from the chosen primary camera."""
         if not self.workers:
             return None
+        if self.primary_camera_index in self.workers:
+            return self.workers[self.primary_camera_index].get_frame()
         min_id = min(self.workers.keys())
         return self.workers[min_id].get_frame()
 
